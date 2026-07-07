@@ -1,0 +1,21 @@
+
+# local model/checkpoint files
+ckpts/*
+!ckpts/README.md
+outputs/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pth
+*.pt
+*.safetensors
+
+/0.9.15/
+/CARLA_*/
+/CarlaUE4/
+/ckpts/*
+!/ckpts/README.md
+/build/
+__pycache__/
+*.pyc
