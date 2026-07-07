@@ -1,0 +1,16 @@
+{
+  "accepted": true,
+  "reason": "matched_intent",
+  "raw_text": "To ahead.",
+  "command_text": "to ahead",
+  "intent": "START",
+  "canonical_lmdrive_instruction": "Please commence driving.",
+  "mode": "AUTONOMOUS",
+  "speed_limit_kmh": null,
+  "distance_m": null,
+  "external_control": {},
+  "confidence": 0.8503597974777222,
+  "source": "embedding",
+  "received_wall_time": 1783254360.618811,
+  "sequence_id": 1783254360618811465
+}
