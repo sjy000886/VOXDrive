@@ -59,7 +59,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--asr-model-dir", dest="model_dir", type=Path, default=DEFAULT_MODEL_DIR)
     parser.add_argument("--vad-dir", type=Path, default=DEFAULT_VAD_DIR)
     parser.add_argument("--asr-device", dest="infer_device", default="cuda:0", help="auto, cpu, cuda:0, ...")
-    parser.add_argument("--language", default="en", help="auto, zh, en, yue, ja, ko.")
+    parser.add_argument(
+        "--language",
+        default=os.environ.get("VOXDRIVE_ASR_LANGUAGE", "auto"),
+        help="auto, zh, en, yue, ja, ko. Default: VOXDRIVE_ASR_LANGUAGE or auto.",
+    )
     parser.add_argument("--merge-vad", action="store_true")
     parser.add_argument("--no-itn", action="store_true")
     parser.add_argument("--keep-wavs", type=Path, default=None, help="Optional directory to keep chunk wavs.")
@@ -233,7 +237,10 @@ def main() -> int:
         use_embedding=not args.no_embedding,
         allow_inline_wake_command=False,
     )
-    print("Ready. English mode. First say 'command' or 'vox drive'. Then say the driving command after the prompt. Press Ctrl+C to stop.")
+    print(
+        f"Ready. ASR language={args.language}. First say 'command', 'vox drive', or '命令'. "
+        "Then say the driving command after the prompt. Press Ctrl+C to stop."
+    )
 
     bytes_per_sample = 2
     samples_per_chunk = int(args.sample_rate * args.chunk_seconds)

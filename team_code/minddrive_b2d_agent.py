@@ -34,8 +34,10 @@ from pyquaternion import Quaternion
 from scipy.optimize import fsolve
 try:
     from voxdrive.voxdrive_voice.command_bus import DEFAULT_COMMAND_PATH, read_command
+    from voxdrive.voxdrive_voice.maneuver import VoiceManeuverController
 except Exception:
     DEFAULT_COMMAND_PATH = pathlib.Path("voxdrive/runtime/voice_command.json")
+    VoiceManeuverController = None
 
     def read_command(*args, **kwargs):
         return None
@@ -115,6 +117,20 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         self.voice_speed_limit_kmh = None
         self.voice_slow_cap_kmh = None
         self.voice_slow_until = 0.0
+        self.voice_max_speed_kmh = float(os.environ.get("VOXDRIVE_MAX_SPEED_KMH", "50"))
+        self.voice_accel_delta_kmh = float(os.environ.get("VOXDRIVE_ACCEL_DELTA_KMH", "10"))
+        self.voice_accel_max_throttle = float(os.environ.get("VOXDRIVE_ACCEL_MAX_THROTTLE", "0.55"))
+        self.voice_maneuver = VoiceManeuverController(
+            lane_change_max_distance_m=float(os.environ.get("VOXDRIVE_LANE_CHANGE_DISTANCE_M", "18")),
+            lane_change_settle_distance_m=float(os.environ.get("VOXDRIVE_LANE_SETTLE_DISTANCE_M", "8")),
+            turn_max_distance_m=float(os.environ.get("VOXDRIVE_TURN_DISTANCE_M", "45")),
+            turn_settle_distance_m=float(os.environ.get("VOXDRIVE_TURN_SETTLE_DISTANCE_M", "10")),
+        ) if VoiceManeuverController is not None else None
+        self.voice_navigation_command = None
+        self.voice_maneuver_metadata = None
+        # Set on the first control frame so commands issued while the model or
+        # scenario is still loading cannot release the startup brake hold.
+        self.voice_session_started_at = None
         self.voice_last_sequence_id = None
         self.voice_last_command = None
         if SAVE_PATH is not None:
@@ -229,6 +245,12 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         )
         if not payload or not payload.get("accepted", False):
             return None
+        try:
+            received_wall_time = float(payload.get("received_wall_time"))
+        except (TypeError, ValueError):
+            return None
+        if received_wall_time <= self.voice_session_started_at:
+            return None
         sequence_id = payload.get("sequence_id", payload.get("received_wall_time"))
         if sequence_id == self.voice_last_sequence_id:
             return None
@@ -236,13 +258,17 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         self.voice_last_command = payload
         return payload
 
-    def _update_voice_state(self, payload, speed_kmh):
+    def _update_voice_state(self, payload, speed_kmh, position=None, heading=0.0):
         intent = payload.get("intent")
         external_control = payload.get("external_control") or {}
         if intent in ("STOP", "EMERGENCY_STOP"):
             self.voice_hold = True
+            if self.voice_maneuver is not None:
+                self.voice_maneuver.cancel()
         elif intent in ("START", "CONTINUE_ROUTE", "KEEP_STRAIGHT"):
             self.voice_hold = False
+            if intent in ("CONTINUE_ROUTE", "KEEP_STRAIGHT") and self.voice_maneuver is not None:
+                self.voice_maneuver.cancel()
         elif intent == "SET_SPEED":
             speed_limit = payload.get("speed_limit_kmh", external_control.get("speed_limit_kmh"))
             try:
@@ -251,11 +277,58 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
                 speed_limit = None
             if speed_limit is not None and speed_limit > 0:
                 self.voice_hold = False
-                self.voice_speed_limit_kmh = speed_limit
+                self.voice_speed_limit_kmh = min(speed_limit, self.voice_max_speed_kmh)
+        elif intent == "ACCELERATE":
+            self.voice_hold = False
+            current_target = self.voice_speed_limit_kmh or speed_kmh
+            self.voice_speed_limit_kmh = min(
+                self.voice_max_speed_kmh,
+                max(speed_kmh, current_target) + self.voice_accel_delta_kmh,
+            )
         elif intent == "SLOW_DOWN":
             self.voice_hold = False
-            self.voice_slow_cap_kmh = max(5.0, min(speed_kmh, 20.0))
-            self.voice_slow_until = time.time() + 5.0
+            self.voice_slow_cap_kmh = max(5.0, speed_kmh - 10.0)
+            self.voice_slow_until = time.time() + 8.0
+        elif intent in (
+            "TURN_LEFT_NEXT",
+            "TURN_RIGHT_NEXT",
+            "TURN_LEFT_AFTER_DISTANCE",
+            "TURN_RIGHT_AFTER_DISTANCE",
+            "CHANGE_LEFT",
+            "CHANGE_RIGHT",
+        ):
+            self.voice_hold = False
+            if self.voice_maneuver is not None and position is not None:
+                delay_distance = payload.get("distance_m", 0.0) if "AFTER_DISTANCE" in intent else 0.0
+                try:
+                    delay_distance = float(delay_distance or 0.0)
+                except (TypeError, ValueError):
+                    delay_distance = 0.0
+                self.voice_maneuver.submit(intent, position, heading, delay_distance)
+
+    def _prepare_voice_frame(self, tick_data):
+        if not getattr(self, "voice_enabled", False):
+            self.voice_navigation_command = None
+            self.voice_maneuver_metadata = None
+            return
+        if self.voice_session_started_at is None:
+            self.voice_session_started_at = time.time()
+
+        speed_kmh = float(tick_data["speed"]) * 3.6
+        payload = self._consume_voice_command()
+        if payload is not None:
+            self._update_voice_state(
+                payload,
+                speed_kmh,
+                position=tick_data["pos"],
+                heading=tick_data["compass"],
+            )
+
+        if self.voice_maneuver is not None:
+            self.voice_navigation_command = self.voice_maneuver.update(
+                tick_data["pos"], tick_data["compass"]
+            )
+            self.voice_maneuver_metadata = self.voice_maneuver.snapshot()
 
     def _apply_voice_control(self, control, speed_mps):
         voice_meta = {
@@ -264,16 +337,13 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
             "speed_limit_kmh": self.voice_speed_limit_kmh,
             "last_intent": None,
             "last_command_text": None,
+            "maneuver": self.voice_maneuver_metadata,
             "override": "none",
         }
         if not voice_meta["enabled"]:
             return voice_meta
 
         speed_kmh = float(speed_mps) * 3.6
-        payload = self._consume_voice_command()
-        if payload is not None:
-            self._update_voice_state(payload, speed_kmh)
-
         if self.voice_last_command is not None:
             voice_meta["last_intent"] = self.voice_last_command.get("intent")
             voice_meta["last_command_text"] = self.voice_last_command.get("command_text")
@@ -301,9 +371,28 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
                 control.throttle = 0.0
                 control.brake = max(float(control.brake), min(0.8, max(0.15, (speed_kmh - active_limit) / 15.0)))
                 voice_meta["override"] = "speed_limit_brake"
+            elif speed_kmh < active_limit - 1.0 and float(control.brake) < 0.05:
+                speed_error = active_limit - speed_kmh
+                requested_throttle = min(
+                    self.voice_accel_max_throttle,
+                    0.20 + speed_error / 30.0,
+                )
+                control.throttle = max(float(control.throttle), requested_throttle)
+                control.brake = 0.0
+                voice_meta["override"] = "speed_target_accelerate"
             else:
                 control.throttle = min(float(control.throttle), 0.35)
-                voice_meta["override"] = "speed_limit_throttle_cap"
+                voice_meta["override"] = "speed_target_hold"
+
+        maneuver = self.voice_maneuver_metadata or {}
+        if maneuver.get("phase") == "settling":
+            # The lane-follow trajectory performs the counter-steer.  Limit
+            # the final correction so the wheel converges smoothly to center.
+            control.steer = float(np.clip(control.steer, -0.20, 0.20))
+            voice_meta["override"] = "maneuver_lane_follow_centering"
+        elif maneuver.get("just_completed"):
+            control.steer = 0.0
+            voice_meta["override"] = "maneuver_wheel_centered"
 
         return voice_meta
   
@@ -440,6 +529,7 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         if not self.initialized:
             self._init()
         tick_data = self.tick(input_data)
+        self._prepare_voice_frame(tick_data)
         results = {}
         results['lidar2img'] = []
         results['lidar2cam'] = []
@@ -472,9 +562,9 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         can_bus[16] = ego_theta
         can_bus[17] = ego_theta / np.pi * 180 
         results['can_bus'] = can_bus
-        command = tick_data['command_curr']
-        results['command'] = command2nohot(tick_data['command_curr'])
-        results['ego_fut_cmd'] = command2hot(tick_data['command_curr'])
+        command = self.voice_navigation_command or tick_data['command_curr']
+        results['command'] = command2nohot(command)
+        results['ego_fut_cmd'] = command2hot(command)
   
         theta_to_lidar = raw_theta
         command_near_xy = np.array([tick_data['command_near_xy'][0]-can_bus[0],-tick_data['command_near_xy'][1]-can_bus[1]])
