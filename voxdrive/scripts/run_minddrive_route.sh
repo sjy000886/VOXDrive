@@ -4,7 +4,7 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$PROJECT_ROOT"
 
-CARLA_ROOT="${CARLA_ROOT:-/home/ys/MindDrive/0.9.15}"
+CARLA_ROOT="${CARLA_ROOT:-$PROJECT_ROOT/0.9.15}"
 if [[ ! -x "$CARLA_ROOT/CarlaUE4.sh" ]]; then
   echo "CARLA_ROOT is invalid: $CARLA_ROOT" >&2
   echo "Set it before running, for example: export CARLA_ROOT=/home/ys/MindDrive/0.9.15" >&2

@@ -154,6 +154,20 @@ INTENT_SPECS = (
         ),
     ),
     IntentSpec(
+        name="ACCELERATE",
+        lm_instruction="Please increase the driving speed.",
+        mode="AUTONOMOUS",
+        external_action="SPEED_UP",
+        examples=(
+            "accelerate",
+            "speed up",
+            "go faster",
+            "加速",
+            "快一点",
+            "提速",
+        ),
+    ),
+    IntentSpec(
         name="SLOW_DOWN",
         lm_instruction="Please decelerate immediately.",
         mode="AUTONOMOUS",

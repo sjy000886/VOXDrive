@@ -24,6 +24,21 @@ DEFAULT_BGE_DIR = REPO_ROOT / "ckpts" / "bge-small-zh-v1.5"
 
 _PUNCT_RE = re.compile(r"[\s,，。.!！?？;；:：]+")
 _NUMBER_RE = re.compile(r"(\d+(?:\.\d+)?)")
+_CHINESE_NUMBER_RE = re.compile(r"[零〇一二两三四五六七八九十百]+")
+_CHINESE_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
 _NUMBER_WORDS = {
     "zero": 0,
     "one": 1,
@@ -241,6 +256,8 @@ class VoxDriveNLU:
             return self._build_result("TURN_LEFT_NEXT", raw_text, command_text, 1.0, "rule")
         if self._has_right(text) and self._has_turn(text):
             return self._build_result("TURN_RIGHT_NEXT", raw_text, command_text, 1.0, "rule")
+        if self._has_accelerate(text):
+            return self._build_result("ACCELERATE", raw_text, command_text, 1.0, "rule")
         if self._has_slow_down(text):
             return self._build_result("SLOW_DOWN", raw_text, command_text, 1.0, "rule")
         if self._has_straight(text):
@@ -264,6 +281,8 @@ class VoxDriveNLU:
             external_control = {"throttle": 0.0, "brake": 1.0}
         elif spec.external_action == "SLOW_DOWN":
             external_control = {"speed_delta_kmh": -10.0}
+        elif spec.external_action == "SPEED_UP":
+            external_control = {"speed_delta_kmh": 10.0}
         return NLUResult(
             True,
             "matched_intent",
@@ -391,6 +410,20 @@ class VoxDriveNLU:
         match = _NUMBER_RE.search(text)
         if match is not None:
             return float(match.group(1))
+        chinese_match = _CHINESE_NUMBER_RE.search(text)
+        if chinese_match is not None:
+            value = 0
+            digit = 0
+            for char in chinese_match.group(0):
+                if char in _CHINESE_DIGITS:
+                    digit = _CHINESE_DIGITS[char]
+                elif char == "十":
+                    value += max(digit, 1) * 10
+                    digit = 0
+                elif char == "百":
+                    value += max(digit, 1) * 100
+                    digit = 0
+            return float(value + digit)
         words = text.split()
         total = 0
         current = 0
@@ -432,6 +465,9 @@ class VoxDriveNLU:
 
     def _has_slow_down(self, text: str) -> bool:
         return any(key in text for key in ("slow", "decelerate", "减速", "慢一点", "安全车速"))
+
+    def _has_accelerate(self, text: str) -> bool:
+        return any(key in text for key in ("accelerate", "speed up", "faster", "加速", "快一点", "提速"))
 
     def _has_straight(self, text: str) -> bool:
         return any(key in text for key in ("straight", "直行", "当前方向", "当前车道"))
