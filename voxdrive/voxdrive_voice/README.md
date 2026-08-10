@@ -16,7 +16,7 @@
 - `SLOW_DOWN`：临时将目标速度降低 10 km/h。
 - `TURN_LEFT_NEXT` / `TURN_RIGHT_NEXT`：将 MindDrive 的高层导航指令切换为下个路口左/右转。
 - `TURN_LEFT_AFTER_DISTANCE` / `TURN_RIGHT_AFTER_DISTANCE`：行驶指定距离后切换转弯指令。
-- `CHANGE_LEFT` / `CHANGE_RIGHT`：切换为左/右变道指令；检测到变道航向恢复或达到最大变道距离后，自动进入 `LANEFOLLOW` 回正阶段，最后将方向盘置中并交还原路线。
+- `CHANGE_LEFT` / `CHANGE_RIGHT`：切换为左/右变道指令；检测到车辆已向目标车道横移且航向恢复，或达到最大变道距离后，自动进入 `LANEFOLLOW` 回正阶段，最后将方向盘置中并交还原路线。
 
 转弯和变道仍由 MindDrive 的感知与轨迹网络生成轨迹，而不是固定时长锁死方向盘。说“继续行驶”或“保持直行”可以取消尚未完成的语音机动；说“停车”会立即取消机动并全刹。
 
@@ -27,6 +27,7 @@ VOXDRIVE_MAX_SPEED_KMH=50
 VOXDRIVE_ACCEL_DELTA_KMH=10
 VOXDRIVE_LANE_CHANGE_DISTANCE_M=18
 VOXDRIVE_LANE_SETTLE_DISTANCE_M=8
+VOXDRIVE_LANE_MIN_LATERAL_M=2.5
 VOXDRIVE_TURN_DISTANCE_M=45
 VOXDRIVE_TURN_SETTLE_DISTANCE_M=10
 ```

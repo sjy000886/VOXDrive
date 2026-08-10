@@ -123,6 +123,7 @@ class MinddriveAgent(autonomous_agent.AutonomousAgent):
         self.voice_maneuver = VoiceManeuverController(
             lane_change_max_distance_m=float(os.environ.get("VOXDRIVE_LANE_CHANGE_DISTANCE_M", "18")),
             lane_change_settle_distance_m=float(os.environ.get("VOXDRIVE_LANE_SETTLE_DISTANCE_M", "8")),
+            lane_change_min_lateral_m=float(os.environ.get("VOXDRIVE_LANE_MIN_LATERAL_M", "2.5")),
             turn_max_distance_m=float(os.environ.get("VOXDRIVE_TURN_DISTANCE_M", "45")),
             turn_settle_distance_m=float(os.environ.get("VOXDRIVE_TURN_SETTLE_DISTANCE_M", "10")),
         ) if VoiceManeuverController is not None else None
