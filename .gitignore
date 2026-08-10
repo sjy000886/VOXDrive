@@ -3,6 +3,7 @@
 ckpts/*
 !ckpts/README.md
 outputs/
+0.9.15/
 build/
 *.egg-info/
 __pycache__/
@@ -10,3 +11,6 @@ __pycache__/
 *.pth
 *.pt
 *.safetensors
+# IDE settings
+.idea/
+.vscode/

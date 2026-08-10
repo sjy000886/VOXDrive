@@ -46,9 +46,11 @@ class VoiceManeuverController:
         lane_change_settle_distance_m: float = 8.0,
         turn_max_distance_m: float = 45.0,
         turn_settle_distance_m: float = 10.0,
+        lane_change_min_lateral_m: float = 2.5,
     ) -> None:
         self.lane_change_max_distance_m = lane_change_max_distance_m
         self.lane_change_settle_distance_m = lane_change_settle_distance_m
+        self.lane_change_min_lateral_m = lane_change_min_lateral_m
         self.turn_max_distance_m = turn_max_distance_m
         self.turn_settle_distance_m = turn_settle_distance_m
         self.cancel()
@@ -61,6 +63,8 @@ class VoiceManeuverController:
         self.phase_distance_m = 0.0
         self.max_heading_delta_rad = 0.0
         self.start_heading: Optional[float] = None
+        self.start_position: Optional[tuple[float, float]] = None
+        self.lateral_progress_m = 0.0
         self.last_position: Optional[tuple[float, float]] = None
         self.just_completed = False
 
@@ -80,7 +84,9 @@ class VoiceManeuverController:
         self.phase_distance_m = 0.0
         self.max_heading_delta_rad = 0.0
         self.start_heading = float(heading)
-        self.last_position = self._position(position)
+        self.start_position = self._position(position)
+        self.lateral_progress_m = 0.0
+        self.last_position = self.start_position
         self.just_completed = False
         return True
 
@@ -100,6 +106,8 @@ class VoiceManeuverController:
             self.phase = "active"
             self.phase_distance_m = 0.0
             self.start_heading = float(heading)
+            self.start_position = current_position
+            self.lateral_progress_m = 0.0
             self.max_heading_delta_rad = 0.0
             return self.command_id
 
@@ -107,6 +115,11 @@ class VoiceManeuverController:
         if self.phase == "active":
             heading_delta = abs(_heading_error(float(heading), float(self.start_heading)))
             self.max_heading_delta_rad = max(self.max_heading_delta_rad, heading_delta)
+            if self.intent in LANE_CHANGE_INTENTS:
+                self.lateral_progress_m = max(
+                    self.lateral_progress_m,
+                    self._lane_change_lateral_progress(current_position),
+                )
             if self._active_phase_finished(heading_delta):
                 self.phase = "settling"
                 self.phase_distance_m = 0.0
@@ -136,6 +149,7 @@ class VoiceManeuverController:
             "command_id": self.command_id,
             "delay_remaining_m": round(self.delay_remaining_m, 3),
             "phase_distance_m": round(self.phase_distance_m, 3),
+            "lateral_progress_m": round(self.lateral_progress_m, 3),
             "max_heading_delta_deg": round(math.degrees(self.max_heading_delta_rad), 3),
             "just_completed": self.just_completed,
         }
@@ -145,7 +159,10 @@ class VoiceManeuverController:
             changed_heading = self.max_heading_delta_rad >= math.radians(4.0)
             heading_recovered = heading_delta <= math.radians(1.5)
             learned_lane_change_finished = (
-                self.phase_distance_m >= 6.0 and changed_heading and heading_recovered
+                self.phase_distance_m >= 6.0
+                and self.lateral_progress_m >= self.lane_change_min_lateral_m
+                and changed_heading
+                and heading_recovered
             )
             return (
                 learned_lane_change_finished
@@ -157,6 +174,25 @@ class VoiceManeuverController:
                 or self.phase_distance_m >= self.turn_max_distance_m
             )
         return True
+
+    def _lane_change_lateral_progress(
+        self, current_position: tuple[float, float]
+    ) -> float:
+        """Return displacement toward the requested adjacent lane.
+
+        CARLA's compass is clockwise from north while the projected GPS y-axis
+        points south.  In these coordinates, the unit vector to the vehicle's
+        left at the start of the maneuver is (-cos(h), -sin(h)).
+        """
+        if self.start_position is None or self.start_heading is None:
+            return 0.0
+        dx = current_position[0] - self.start_position[0]
+        dy = current_position[1] - self.start_position[1]
+        signed_left = (
+            -dx * math.cos(self.start_heading)
+            - dy * math.sin(self.start_heading)
+        )
+        return signed_left if self.intent == "CHANGE_LEFT" else -signed_left
 
     def _segment_distance(self, current: tuple[float, float]) -> float:
         if self.last_position is None:
